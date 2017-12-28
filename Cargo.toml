@@ -1,0 +1,13 @@
+[package]
+name = "prom-eagle"
+version = "0.1.0"
+authors = ["Hyrum Wright <hyrum@hyrumwright.org>"]
+
+[dependencies]
+prometheus = "0.3"
+hyper = "0.11.10"
+lazy_static = "1.0.0"
+config = "0.7.0"
+clap = "2.29.0"
+log = "0.4.0"
+env_logger = "0.4.3"
