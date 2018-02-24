@@ -17,7 +17,7 @@ extern crate serde_yaml;
 
 use clap::{App, Arg};
 use futures::future::Future;
-use hyper::{StatusCode, Method};
+use hyper::{Method, StatusCode};
 use hyper::header::{ContentLength, ContentType};
 use hyper::mime::Mime;
 use hyper::server::{Http, Request, Response, Service};
@@ -54,7 +54,17 @@ mod config {
     }
 }
 
-struct MetricsService;
+struct MetricsService {
+    encoder: TextEncoder,
+}
+
+impl MetricsService {
+    pub fn new() -> MetricsService {
+        MetricsService {
+            encoder: TextEncoder::new(),
+        }
+    }
+}
 
 impl Service for MetricsService {
     // boilerplate hooking up hyper's server types
@@ -72,12 +82,15 @@ impl Service for MetricsService {
         match (req.method(), req.path()) {
             (&Method::Get, "/metrics") => {
                 HTTP_COUNTER.inc();
-                let encoder = TextEncoder::new();
                 let metric_families = prometheus::gather();
                 let mut buffer = vec![];
-                encoder.encode(&metric_families, &mut buffer).unwrap();
-                response.headers_mut().set(ContentType(encoder.format_type().parse::<Mime>().unwrap()));
-                response.headers_mut().set(ContentLength(buffer.len() as u64));
+                self.encoder.encode(&metric_families, &mut buffer).unwrap();
+                response.headers_mut().set(ContentType(
+                    self.encoder.format_type().parse::<Mime>().unwrap(),
+                ));
+                response
+                    .headers_mut()
+                    .set(ContentLength(buffer.len() as u64));
                 response.set_body(buffer);
             }
             _ => {
@@ -117,6 +130,8 @@ fn main() {
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
     println!("Starting server for {}", addr);
-    let server = Http::new().bind(&addr, || Ok(MetricsService)).unwrap();
+    let server = Http::new()
+        .bind(&addr, || Ok(MetricsService::new()))
+        .unwrap();
     server.run().unwrap();
 }
