@@ -25,7 +25,6 @@ use hyper::mime::Mime;
 use hyper::server::{Http, Request, Response, Service};
 use prometheus::{Encoder, Gauge, TextEncoder};
 
-use std::i64;
 use std::net;
 
 mod config {
@@ -88,6 +87,11 @@ mod client {
             let multiplier = i64::from_str_radix(&self.Demand[2..], 16).unwrap();
             let divisor = i64::from_str_radix(&self.Divisor[2..], 16).unwrap();
             let factor = divisor as f64 / 1000.0;
+            debug!("Demand:     {}", demand);
+            debug!("Multiplier: {}", multiplier);
+            debug!("Divisor:    {}", divisor);
+            debug!("Factor:     {}", factor);
+            debug!("Result:     {}", (demand * multiplier) as f64 * factor);
             (demand * multiplier) as f64 * factor
         }
     }
