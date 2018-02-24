@@ -27,10 +27,6 @@ use prometheus::{Encoder, Gauge, TextEncoder};
 
 use std::net;
 
-header! { (User, "User") => [String] }
-header! { (Password, "Password") => [String] }
-header! { (CloudId, "Cloud-Id") => [String] }
-
 mod config {
     use std::fs::File;
 
@@ -57,6 +53,63 @@ mod config {
     impl Config {
         pub fn new(filename: &str) -> Config {
             serde_yaml::from_reader(File::open(filename).unwrap()).unwrap()
+        }
+    }
+}
+
+mod client {
+    use super::config;
+    use super::INSTANT_POWER;
+    use reqwest;
+
+    header! { (User, "User") => [String] }
+    header! { (Password, "Password") => [String] }
+    header! { (CloudId, "Cloud-Id") => [String] }
+
+    #[derive(Debug, Deserialize)]
+    #[allow(non_snake_case)]
+    struct EagleDemand {
+        DeviceMacId: String,
+        MeterMacId: String,
+        TimeStamp: String,
+        Demand: String,
+        Multiplier: String,
+        Divisor: String,
+        DigitsRight: String,
+        DigitsLeft: String,
+        SuppressLeadingZero: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[allow(non_snake_case)]
+    struct EagleResponse {
+        pub InstantaneousDemand: EagleDemand,
+    }
+
+    pub struct EagleClient<'a> {
+        config: &'a config::Eagle,
+    }
+
+    impl<'a> EagleClient<'a> {
+        pub fn new(config: &'a config::Eagle) -> EagleClient<'a> {
+            EagleClient { config: config }
+        }
+
+        pub fn update_metrics(&self) {
+            let client = reqwest::Client::new();
+            let mut resp = client
+                .post("https://rainforestcloud.com:9445/cgi-bin/post_manager")
+                .header(User(self.config.user.clone()).to_owned())
+                .header(Password(self.config.password.clone()).to_owned())
+                .header(CloudId(self.config.cloud_id.clone()).to_owned())
+                .body(
+                    "<Command><Name>get_instantaneous_demand</Name><Format>JSON</Format></Command>",
+                )
+                .send()
+                .unwrap();
+            let resp: EagleResponse = resp.json().unwrap();
+            println!("status: {:?}", resp);
+            INSTANT_POWER.set(2345.3);
         }
     }
 }
@@ -114,21 +167,9 @@ lazy_static! {
     ).unwrap();
 }
 
-fn update_metrics(eagle_config: &config::Eagle) {
-    let client = reqwest::Client::new();
-    let resp = client
-        .post("https://rainforestcloud.com:9445/cgi-bin/post_manager")
-        .header(User(eagle_config.user.clone()).to_owned())
-        .header(Password(eagle_config.password.clone()).to_owned())
-        .header(CloudId(eagle_config.cloud_id.clone()).to_owned())
-        .body("<Command><Name>get_instantaneous_demand</Name><Format>JSON</Format></Command>")
-        .send()
-        .unwrap();
-    println!("status: {}", resp.status());
-    INSTANT_POWER.set(2345.3);
-}
-
 fn main() {
+    env_logger::init();
+
     let matches = App::new("Prom Rain")
         .version("0.1.0")
         .author("Hyrum Wright <hyrum@hyrumwright.org>")
@@ -144,11 +185,12 @@ fn main() {
     let config = matches.value_of("config").unwrap();
     let config = config::Config::new(config);
 
-    update_metrics(&config.eagle);
+    let eagle_client = client::EagleClient::new(&config.eagle);
+    eagle_client.update_metrics();
 
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
-    println!("Starting server for {}", addr);
+    info!("Starting server for {}", addr);
     let server = Http::new()
         .bind(&addr, || Ok(MetricsService::new()))
         .unwrap();
