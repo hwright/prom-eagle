@@ -43,7 +43,7 @@ mod config {
         pub port: u16,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Debug, Deserialize, Clone)]
     pub struct Eagle {
         pub user: String,
         pub password: String,
@@ -86,15 +86,16 @@ mod client {
         /// Returns the power represented by this result (in watts)
         fn get_power(&self) -> Result<f64, ParseIntError> {
             let demand = i64::from_str_radix(&self.Demand[2..], 16)?;
-            let multiplier = i64::from_str_radix(&self.Demand[2..], 16)?;
+            let multiplier = i64::from_str_radix(&self.Multiplier[2..], 16)?;
             let divisor = i64::from_str_radix(&self.Divisor[2..], 16)?;
             let factor = divisor as f64 / 1000.0;
+            let result = (demand * multiplier) as f64 * factor;
             debug!("Demand:     {}", demand);
             debug!("Multiplier: {}", multiplier);
             debug!("Divisor:    {}", divisor);
             debug!("Factor:     {}", factor);
-            debug!("Result:     {}", (demand * multiplier) as f64 * factor);
-            Ok((demand * multiplier) as f64 * factor)
+            debug!("Result:     {}", result);
+            Ok(result)
         }
     }
 
@@ -104,13 +105,13 @@ mod client {
         pub InstantaneousDemand: EagleDemand,
     }
 
-    pub struct EagleClient<'a> {
-        config: &'a config::Eagle,
+    pub struct EagleClient {
+        config: config::Eagle,
         client: reqwest::Client,
     }
 
-    impl<'a> EagleClient<'a> {
-        pub fn new(config: &'a config::Eagle) -> EagleClient<'a> {
+    impl EagleClient {
+        pub fn new(config: config::Eagle) -> EagleClient {
             EagleClient {
                 config: config,
                 client: reqwest::Client::new(),
@@ -136,12 +137,14 @@ mod client {
 
 struct MetricsService {
     encoder: TextEncoder,
+    eagle_client: client::EagleClient,
 }
 
 impl MetricsService {
-    pub fn new() -> MetricsService {
+    pub fn new(eagle_client: client::EagleClient) -> MetricsService {
         MetricsService {
             encoder: TextEncoder::new(),
+            eagle_client: eagle_client,
         }
     }
 }
@@ -158,6 +161,9 @@ impl Service for MetricsService {
 
         match (req.method(), req.path()) {
             (&Method::Get, "/metrics") => {
+                // #TODO: Make this metrics update async, to reduce latency.
+                self.eagle_client.update_metrics();
+
                 let metric_families = prometheus::gather();
                 let mut buffer = vec![];
                 self.encoder.encode(&metric_families, &mut buffer).unwrap();
@@ -206,14 +212,15 @@ fn main() {
     let config = matches.value_of("config").unwrap();
     let config = config::Config::new(config);
 
-    let eagle_client = client::EagleClient::new(&config.eagle);
-    eagle_client.update_metrics();
-
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
     info!("Starting server for {}", addr);
     let server = Http::new()
-        .bind(&addr, || Ok(MetricsService::new()))
+        .bind(&addr, move || {
+            Ok(MetricsService::new(client::EagleClient::new(
+                config.eagle.clone(),
+            )))
+        })
         .unwrap();
     server.run().unwrap();
 }
