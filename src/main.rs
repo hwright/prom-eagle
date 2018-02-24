@@ -48,6 +48,7 @@ mod config {
         pub user: String,
         pub password: String,
         pub cloud_id: String,
+        pub update_interval_secs: u32,
     }
 
     impl Config {
@@ -63,6 +64,8 @@ mod client {
     use reqwest;
 
     use std::num::ParseIntError;
+    use std::thread;
+    use std::time::Duration;
 
     header! { (User, "User") => [String] }
     header! { (Password, "Password") => [String] }
@@ -107,30 +110,36 @@ mod client {
 
     pub struct EagleClient {
         config: config::Eagle,
-        client: reqwest::Client,
     }
 
     impl EagleClient {
         pub fn new(config: config::Eagle) -> EagleClient {
-            EagleClient {
-                config: config,
-                client: reqwest::Client::new(),
-            }
+            EagleClient { config: config }
         }
 
-        pub fn update_metrics(&self) {
-            let mut resp = self.client
-                .post("https://rainforestcloud.com:9445/cgi-bin/post_manager")
-                .header(User(self.config.user.clone()).to_owned())
-                .header(Password(self.config.password.clone()).to_owned())
-                .header(CloudId(self.config.cloud_id.clone()).to_owned())
-                .body(
-                    "<Command><Name>get_instantaneous_demand</Name><Format>JSON</Format></Command>",
-                )
-                .send()
-                .unwrap();
-            let resp: EagleResponse = resp.json().unwrap();
-            INSTANT_POWER.set(resp.InstantaneousDemand.get_power().unwrap());
+        pub fn start_update(&self) {
+            let user_header = User(self.config.user.clone()).to_owned();
+            let password_header = Password(self.config.password.clone()).to_owned();
+            let cloud_id_header = CloudId(self.config.cloud_id.clone()).to_owned();
+            let sleep_duration = Duration::new(self.config.update_interval_secs as u64, 0);
+
+            thread::spawn(move || {
+                let client = reqwest::Client::new();
+                loop {
+                    let mut resp = client
+                        .post("https://rainforestcloud.com:9445/cgi-bin/post_manager")
+                        .header(user_header.clone())
+                        .header(password_header.clone())
+                        .header(cloud_id_header.clone())
+                        .body(
+                            "<Command><Name>get_instantaneous_demand</Name><Format>JSON</Format></Command>",)
+                        .send()
+                        .unwrap();
+                    let resp: EagleResponse = resp.json().unwrap();
+                    INSTANT_POWER.set(resp.InstantaneousDemand.get_power().unwrap());
+                    thread::sleep(sleep_duration);
+                }
+            });
         }
     }
 }
@@ -142,6 +151,8 @@ struct MetricsService {
 
 impl MetricsService {
     pub fn new(eagle_client: client::EagleClient) -> MetricsService {
+        eagle_client.start_update();
+
         MetricsService {
             encoder: TextEncoder::new(),
             eagle_client: eagle_client,
@@ -161,9 +172,6 @@ impl Service for MetricsService {
 
         match (req.method(), req.path()) {
             (&Method::Get, "/metrics") => {
-                // #TODO: Make this metrics update async, to reduce latency.
-                self.eagle_client.update_metrics();
-
                 let metric_families = prometheus::gather();
                 let mut buffer = vec![];
                 self.encoder.encode(&metric_families, &mut buffer).unwrap();
