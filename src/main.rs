@@ -137,19 +137,45 @@ mod client {
             thread::spawn(move || {
                 let client = reqwest::Client::new();
                 loop {
-                    let mut resp = client
+                    let mut resp = match client
                         .post("https://rainforestcloud.com:9445/cgi-bin/post_manager")
                         .header(user_header.clone())
                         .header(password_header.clone())
                         .header(cloud_id_header.clone())
                         .body(
                             "<Command><Name>get_instantaneous_demand</Name><Format>JSON</Format></Command>",)
-                        .send()
-                        .unwrap();
-                    let text = resp.text().unwrap();
-                    debug!("Response: {}", text);
-                    let resp: EagleResponse = serde_json::de::from_str(&text).unwrap();
-                    INSTANT_POWER.set(resp.InstantaneousDemand.get_power().unwrap());
+                        .send() {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!("Error making request: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let text = match resp.text() {
+                        Ok(t) => t,
+                        Err(e) => {
+                            warn!("Could not fetch text: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let resp: EagleResponse = match serde_json::de::from_str(&text) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            warn!("Could not parse the following json response: {}", text);
+                            continue;
+                        }
+                    };
+
+                    let power = match resp.InstantaneousDemand.get_power() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("Could not get power value: {}", e);
+                            continue;
+                        }
+                    };
+                    INSTANT_POWER.set(power);
                     thread::sleep(sleep_duration);
                 }
             });
@@ -227,7 +253,10 @@ fn main() {
         .get_matches();
 
     let config = matches.value_of("config").unwrap();
-    let config = config::Config::new(config).unwrap();
+    let config = match config::Config::new(config) {
+        Ok(c) => c,
+        Err(e) => panic!("Error with config file '{}': {}", config, e),
+    };
 
     let eagle_client = client::EagleClient::new(config.eagle);
     eagle_client.start_update();
