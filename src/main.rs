@@ -17,6 +17,7 @@ extern crate serde_yaml;
 
 use clap::{App, Arg};
 use futures::future::Future;
+use hyper::{StatusCode, Method};
 use hyper::header::{ContentLength, ContentType};
 use hyper::mime::Mime;
 use hyper::server::{Http, Request, Response, Service};
@@ -65,20 +66,25 @@ impl Service for MetricsService {
     // resolve to. This can change to whatever Future you need.
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
-    fn call(&self, _req: Request) -> Self::Future {
-        let encoder = TextEncoder::new();
-        let metric_families = prometheus::gather();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        // We're currently ignoring the Request
-        // And returning an 'ok' Future, which means it's ready
-        // immediately, and build a Response with the 'PHRASE' body.
-        Box::new(futures::future::ok(
-            Response::new()
-                .with_header(ContentType(encoder.format_type().parse::<Mime>().unwrap()))
-                .with_header(ContentLength(buffer.len() as u64))
-                .with_body(buffer),
-        ))
+    fn call(&self, req: Request) -> Self::Future {
+        let mut response = Response::new();
+
+        match (req.method(), req.path()) {
+            (&Method::Get, "/metrics") => {
+                HTTP_COUNTER.inc();
+                let encoder = TextEncoder::new();
+                let metric_families = prometheus::gather();
+                let mut buffer = vec![];
+                encoder.encode(&metric_families, &mut buffer).unwrap();
+                response.headers_mut().set(ContentType(encoder.format_type().parse::<Mime>().unwrap()));
+                response.headers_mut().set(ContentLength(buffer.len() as u64));
+                response.set_body(buffer);
+            }
+            _ => {
+                response.set_status(StatusCode::NotFound);
+            }
+        }
+        Box::new(futures::future::ok(response))
     }
 }
 
