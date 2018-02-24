@@ -4,6 +4,7 @@
 extern crate clap;
 extern crate env_logger;
 extern crate futures;
+#[macro_use]
 extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
@@ -11,6 +12,7 @@ extern crate lazy_static;
 extern crate log;
 #[macro_use]
 extern crate prometheus;
+extern crate reqwest;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_yaml;
@@ -21,9 +23,13 @@ use hyper::{Method, StatusCode};
 use hyper::header::{ContentLength, ContentType};
 use hyper::mime::Mime;
 use hyper::server::{Http, Request, Response, Service};
-use prometheus::{Counter, Encoder, TextEncoder};
+use prometheus::{Encoder, Gauge, TextEncoder};
 
 use std::net;
+
+header! { (User, "User") => [String] }
+header! { (Password, "Password") => [String] }
+header! { (CloudId, "Cloud-Id") => [String] }
 
 mod config {
     use std::fs::File;
@@ -45,6 +51,7 @@ mod config {
     pub struct Eagle {
         pub user: String,
         pub password: String,
+        pub cloud_id: String,
     }
 
     impl Config {
@@ -71,9 +78,6 @@ impl Service for MetricsService {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
-
-    // The future representing the eventual Response your call will
-    // resolve to. This can change to whatever Future you need.
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
@@ -81,7 +85,6 @@ impl Service for MetricsService {
 
         match (req.method(), req.path()) {
             (&Method::Get, "/metrics") => {
-                HTTP_COUNTER.inc();
                 let metric_families = prometheus::gather();
                 let mut buffer = vec![];
                 self.encoder.encode(&metric_families, &mut buffer).unwrap();
@@ -102,13 +105,27 @@ impl Service for MetricsService {
 }
 
 lazy_static! {
-    static ref HTTP_COUNTER: Counter = register_counter!(
+    static ref INSTANT_POWER: Gauge = register_gauge!(
         opts!(
-            "example_http_requests_total",
-            "Total number of HTTP requests made.",
+            "instantaneous_power",
+            "Instantaneous electricity usage.",
             labels!{"handler" => "all",}
         )
     ).unwrap();
+}
+
+fn update_metrics(eagle_config: &config::Eagle) {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://rainforestcloud.com:9445/cgi-bin/post_manager")
+        .header(User(eagle_config.user.clone()).to_owned())
+        .header(Password(eagle_config.password.clone()).to_owned())
+        .header(CloudId(eagle_config.cloud_id.clone()).to_owned())
+        .body("<Command><Name>get_instantaneous_demand</Name><Format>JSON</Format></Command>")
+        .send()
+        .unwrap();
+    println!("status: {}", resp.status());
+    INSTANT_POWER.set(2345.3);
 }
 
 fn main() {
@@ -126,6 +143,8 @@ fn main() {
 
     let config = matches.value_of("config").unwrap();
     let config = config::Config::new(config);
+
+    update_metrics(&config.eagle);
 
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
