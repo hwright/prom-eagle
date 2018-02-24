@@ -62,6 +62,8 @@ mod client {
     use super::INSTANT_POWER;
     use reqwest;
 
+    use std::num::ParseIntError;
+
     header! { (User, "User") => [String] }
     header! { (Password, "Password") => [String] }
     header! { (CloudId, "Cloud-Id") => [String] }
@@ -82,17 +84,17 @@ mod client {
 
     impl EagleDemand {
         /// Returns the power represented by this result (in watts)
-        fn get_power(&self) -> f64 {
-            let demand = i64::from_str_radix(&self.Demand[2..], 16).unwrap();
-            let multiplier = i64::from_str_radix(&self.Demand[2..], 16).unwrap();
-            let divisor = i64::from_str_radix(&self.Divisor[2..], 16).unwrap();
+        fn get_power(&self) -> Result<f64, ParseIntError> {
+            let demand = i64::from_str_radix(&self.Demand[2..], 16)?;
+            let multiplier = i64::from_str_radix(&self.Demand[2..], 16)?;
+            let divisor = i64::from_str_radix(&self.Divisor[2..], 16)?;
             let factor = divisor as f64 / 1000.0;
             debug!("Demand:     {}", demand);
             debug!("Multiplier: {}", multiplier);
             debug!("Divisor:    {}", divisor);
             debug!("Factor:     {}", factor);
             debug!("Result:     {}", (demand * multiplier) as f64 * factor);
-            (demand * multiplier) as f64 * factor
+            Ok((demand * multiplier) as f64 * factor)
         }
     }
 
@@ -127,7 +129,7 @@ mod client {
                 .send()
                 .unwrap();
             let resp: EagleResponse = resp.json().unwrap();
-            INSTANT_POWER.set(resp.InstantaneousDemand.get_power());
+            INSTANT_POWER.set(resp.InstantaneousDemand.get_power().unwrap());
         }
     }
 }
