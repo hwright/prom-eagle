@@ -25,6 +25,7 @@ use hyper::mime::Mime;
 use hyper::server::{Http, Request, Response, Service};
 use prometheus::{Encoder, Gauge, TextEncoder};
 
+use std::i64;
 use std::net;
 
 mod config {
@@ -80,6 +81,17 @@ mod client {
         SuppressLeadingZero: String,
     }
 
+    impl EagleDemand {
+        /// Returns the power represented by this result (in watts)
+        fn get_power(&self) -> f64 {
+            let demand = i64::from_str_radix(&self.Demand[2..], 16).unwrap();
+            let multiplier = i64::from_str_radix(&self.Demand[2..], 16).unwrap();
+            let divisor = i64::from_str_radix(&self.Divisor[2..], 16).unwrap();
+            let factor = divisor as f64 / 1000.0;
+            (demand * multiplier) as f64 * factor
+        }
+    }
+
     #[derive(Debug, Deserialize)]
     #[allow(non_snake_case)]
     struct EagleResponse {
@@ -88,16 +100,19 @@ mod client {
 
     pub struct EagleClient<'a> {
         config: &'a config::Eagle,
+        client: reqwest::Client,
     }
 
     impl<'a> EagleClient<'a> {
         pub fn new(config: &'a config::Eagle) -> EagleClient<'a> {
-            EagleClient { config: config }
+            EagleClient {
+                config: config,
+                client: reqwest::Client::new(),
+            }
         }
 
         pub fn update_metrics(&self) {
-            let client = reqwest::Client::new();
-            let mut resp = client
+            let mut resp = self.client
                 .post("https://rainforestcloud.com:9445/cgi-bin/post_manager")
                 .header(User(self.config.user.clone()).to_owned())
                 .header(Password(self.config.password.clone()).to_owned())
@@ -108,8 +123,7 @@ mod client {
                 .send()
                 .unwrap();
             let resp: EagleResponse = resp.json().unwrap();
-            println!("status: {:?}", resp);
-            INSTANT_POWER.set(2345.3);
+            INSTANT_POWER.set(resp.InstantaneousDemand.get_power());
         }
     }
 }
