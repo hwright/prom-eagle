@@ -8,7 +8,14 @@ use clap::{App, Arg};
 extern crate serde_derive;
 extern crate serde_yaml;
 
+extern crate hyper;
 extern crate prometheus;
+
+use hyper::header::ContentType;
+use hyper::mime::Mime;
+use hyper::server::{Request, Response, Server};
+
+use std::net;
 
 mod config {
     use std::fs::File;
@@ -17,12 +24,12 @@ mod config {
 
     #[derive(Debug, Deserialize)]
     pub struct Config {
-        server: Server,
+        pub server: Server,
     }
 
     #[derive(Debug, Deserialize)]
     pub struct Server {
-        port: u16,
+        pub port: u16,
     }
 
     impl Config {
@@ -48,4 +55,11 @@ fn main() {
     let config = matches.value_of("config").unwrap();
     let config = config::Config::new(config);
     println!("Config: {:?}", config);
+
+    let addr = "0.0.0.0".parse().unwrap();
+    let addr = net::SocketAddr::new(addr, config.server.port);
+    Server::http(addr)
+        .unwrap()
+        .handle(move |req: Request, res: Response| {})
+        .unwrap();
 }
