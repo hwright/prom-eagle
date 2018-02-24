@@ -2,22 +2,24 @@
 // prometheus metrics
 
 extern crate clap;
+extern crate env_logger;
+extern crate futures;
 extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
 #[macro_use]
 extern crate prometheus;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_yaml;
-#[macro_use]
-extern crate log;
-extern crate env_logger;
 
 use clap::{App, Arg};
-use hyper::header::ContentType;
+use futures::future::Future;
+use hyper::header::{ContentLength, ContentType};
 use hyper::mime::Mime;
-use hyper::server::{Request, Response, Server};
+use hyper::server::{Http, Request, Response, Service};
 use prometheus::{Counter, Encoder, TextEncoder};
 
 use std::net;
@@ -51,6 +53,35 @@ mod config {
     }
 }
 
+struct MetricsService;
+
+impl Service for MetricsService {
+    // boilerplate hooking up hyper's server types
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+
+    // The future representing the eventual Response your call will
+    // resolve to. This can change to whatever Future you need.
+    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
+
+    fn call(&self, _req: Request) -> Self::Future {
+        let encoder = TextEncoder::new();
+        let metric_families = prometheus::gather();
+        let mut buffer = vec![];
+        encoder.encode(&metric_families, &mut buffer).unwrap();
+        // We're currently ignoring the Request
+        // And returning an 'ok' Future, which means it's ready
+        // immediately, and build a Response with the 'PHRASE' body.
+        Box::new(futures::future::ok(
+            Response::new()
+                .with_header(ContentType(encoder.format_type().parse::<Mime>().unwrap()))
+                .with_header(ContentLength(buffer.len() as u64))
+                .with_body(buffer),
+        ))
+    }
+}
+
 lazy_static! {
     static ref HTTP_COUNTER: Counter = register_counter!(
         opts!(
@@ -77,19 +108,9 @@ fn main() {
     let config = matches.value_of("config").unwrap();
     let config = config::Config::new(config);
 
-    let encoder = TextEncoder::new();
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
     println!("Starting server for {}", addr);
-    Server::http(addr)
-        .unwrap()
-        .handle(move |req: Request, mut res: Response| {
-            let metric_families = prometheus::gather();
-            let mut buffer = vec![];
-            encoder.encode(&metric_families, &mut buffer).unwrap();
-            res.headers_mut()
-                .set(ContentType(encoder.format_type().parse::<Mime>().unwrap()));
-            res.send(&buffer).unwrap();
-        })
-        .unwrap();
+    let server = Http::new().bind(&addr, || Ok(MetricsService)).unwrap();
+    server.run().unwrap();
 }
