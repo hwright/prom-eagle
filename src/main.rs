@@ -17,6 +17,7 @@ extern crate prometheus;
 extern crate reqwest;
 #[macro_use]
 extern crate serde_derive;
+extern crate serde_json;
 extern crate serde_yaml;
 
 use clap::{App, Arg};
@@ -71,6 +72,7 @@ mod client {
     use super::config;
     use super::INSTANT_POWER;
     use reqwest;
+    use serde_json;
 
     use std::num::ParseIntError;
     use std::thread;
@@ -144,7 +146,9 @@ mod client {
                             "<Command><Name>get_instantaneous_demand</Name><Format>JSON</Format></Command>",)
                         .send()
                         .unwrap();
-                    let resp: EagleResponse = resp.json().unwrap();
+                    let text = resp.text().unwrap();
+                    debug!("Response: {}", text);
+                    let resp: EagleResponse = serde_json::de::from_str(&text).unwrap();
                     INSTANT_POWER.set(resp.InstantaneousDemand.get_power().unwrap());
                     thread::sleep(sleep_duration);
                 }
@@ -155,16 +159,12 @@ mod client {
 
 struct MetricsService {
     encoder: TextEncoder,
-    eagle_client: client::EagleClient,
 }
 
 impl MetricsService {
-    pub fn new(eagle_client: client::EagleClient) -> MetricsService {
-        eagle_client.start_update();
-
+    pub fn new() -> MetricsService {
         MetricsService {
             encoder: TextEncoder::new(),
-            eagle_client: eagle_client,
         }
     }
 }
@@ -229,15 +229,14 @@ fn main() {
     let config = matches.value_of("config").unwrap();
     let config = config::Config::new(config).unwrap();
 
+    let eagle_client = client::EagleClient::new(config.eagle);
+    eagle_client.start_update();
+
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
     info!("Starting server for {}", addr);
     let server = Http::new()
-        .bind(&addr, move || {
-            Ok(MetricsService::new(client::EagleClient::new(
-                config.eagle.clone(),
-            )))
-        })
+        .bind(&addr, move || Ok(MetricsService::new()))
         .unwrap();
     server.run().unwrap();
 }
