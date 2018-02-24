@@ -190,9 +190,10 @@ lazy_static! {
 fn main() {
     env_logger::init();
 
-    let matches = App::new("Prom Rain")
+    let matches = App::new("Prom Eagle")
         .version("0.1.0")
         .author("Hyrum Wright <hyrum@hyrumwright.org>")
+        .about("Exports power usage to Prometheus from an Eagle power monitor")
         .arg(
             Arg::with_name("config")
                 .long("config")
