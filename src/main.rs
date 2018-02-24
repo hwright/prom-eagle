@@ -10,6 +10,9 @@ extern crate prometheus;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_yaml;
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 
 use clap::{App, Arg};
 use hyper::header::ContentType;
@@ -27,11 +30,18 @@ mod config {
     #[derive(Debug, Deserialize)]
     pub struct Config {
         pub server: Server,
+        pub eagle: Eagle,
     }
 
     #[derive(Debug, Deserialize)]
     pub struct Server {
         pub port: u16,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Eagle {
+        pub user: String,
+        pub password: String,
     }
 
     impl Config {
@@ -66,11 +76,11 @@ fn main() {
 
     let config = matches.value_of("config").unwrap();
     let config = config::Config::new(config);
-    println!("Config: {:?}", config);
 
     let encoder = TextEncoder::new();
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
+    println!("Starting server for {}", addr);
     Server::http(addr)
         .unwrap()
         .handle(move |req: Request, mut res: Response| {
