@@ -3,6 +3,8 @@
 
 extern crate clap;
 extern crate env_logger;
+#[macro_use]
+extern crate error_chain;
 extern crate futures;
 #[macro_use]
 extern crate hyper;
@@ -32,6 +34,13 @@ mod config {
 
     use serde_yaml;
 
+    error_chain!{
+        foreign_links {
+            Io(::std::io::Error);
+            Json(serde_yaml::Error);
+        }
+    }
+
     #[derive(Debug, Deserialize)]
     pub struct Config {
         pub server: Server,
@@ -52,8 +61,8 @@ mod config {
     }
 
     impl Config {
-        pub fn new(filename: &str) -> Config {
-            serde_yaml::from_reader(File::open(filename).unwrap()).unwrap()
+        pub fn new(filename: &str) -> Result<Config> {
+            Ok(serde_yaml::from_reader(File::open(filename)?)?)
         }
     }
 }
@@ -218,7 +227,7 @@ fn main() {
         .get_matches();
 
     let config = matches.value_of("config").unwrap();
-    let config = config::Config::new(config);
+    let config = config::Config::new(config).unwrap();
 
     let addr = "0.0.0.0".parse().unwrap();
     let addr = net::SocketAddr::new(addr, config.server.port);
