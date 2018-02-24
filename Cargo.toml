@@ -6,6 +6,7 @@ authors = ["Hyrum Wright <hyrum@hyrumwright.org>"]
 [dependencies]
 prometheus = "0.3"
 hyper = "0.9"
+lazy_static = "1.0.0"
 clap = "2.30.0"
 serde = "1.0"
 serde_yaml = "0.7"
